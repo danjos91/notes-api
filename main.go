@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type Note struct {
 	ID      int
 	Title   string
 	Content string
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 var store = map[string]Note{}
@@ -22,20 +27,35 @@ func notesHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	//Initialize notes to return
-	var notes []Note
-	//Loop to get the notes from store
-	for _, note := range store {
-		notes = append(notes, note)
+	//return value of type json
+	w.Header().Set("Content-Type", "application/json")
+	//check if id is present
+	id := strings.Trim(r.URL.Path, "/notes/")
+
+	var data []byte
+	var err error
+
+	if len(id) > 0 {
+		note := store[id]
+		if note.ID == 0 { //actually checking if not is not zero
+			w.WriteHeader(http.StatusNotFound)
+			data, _ = json.Marshal(ErrorResponse{Error: "not found"})
+		} else {
+			data, err = json.Marshal(store[id])
+		}
+	} else {
+		var notes []Note
+		for _, note := range store {
+			notes = append(notes, note)
+		}
+		data, err = json.Marshal(notes)
 	}
-	//Getting ready de json to return, data is binary []byte
-	data, err := json.Marshal(notes)
+
 	if err != nil {
+		log.Println("I got an error")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	//Set the content type to json
-	w.Header().Set("Content-Type", "application/json")
 	//w.WriteHeader(http.StatusOK) //200 by default
 	w.Write(data)
 }
@@ -50,6 +70,8 @@ func main() {
 	fmt.Println("Server is running on port 8080")
 
 	http.HandleFunc("/notes", notesHandler)
+	http.HandleFunc("/notes/", notesHandler)
+
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
 	}
