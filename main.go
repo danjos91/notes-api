@@ -1,4 +1,4 @@
-// Notes API - Step 3
+// Notes API - Step 6
 package main
 
 import (
@@ -26,73 +26,136 @@ type ErrorResponse struct {
 var store = map[int]Note{}
 
 func notesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Println("I got an error with POST request, reading body")
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var bodyRequest Note
-		decodeError := json.Unmarshal(body, &bodyRequest)
-		if decodeError != nil {
-			log.Println("I got an error decoding body")
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		idCounter++
-		fmt.Println("ID Counter: ", idCounter)
-		bodyRequest.ID = idCounter
-		store[idCounter] = bodyRequest
-		w.WriteHeader(http.StatusCreated)
-		data, _ := json.Marshal(bodyRequest)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
-		return
-	}
 
-	//Check method
-	if r.Method != http.MethodGet {
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notes"), "/")
+		if len(id) > 0 {
+			getNoteById(id, w)
+		} else {
+			getNotes(w)
+		}
+	case http.MethodPost:
+		note, err := readBody(r, w)
+		if err != nil {
+			return
+		}
+		addNote(note, w)
+	case http.MethodPut:
+		note, err := readBody(r, w)
+		if err != nil {
+			return
+		}
+		updateNote(note, w, r)
+	case http.MethodDelete:
+		deleteNote(w, r)
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	//return value of type json
-	w.Header().Set("Content-Type", "application/json")
-	//check if id is present (use TrimPrefix so we don't trim letters that appear in "notes", e.g. "7oo" -> "7")
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notes/"), "/")
 
+}
+
+func readBody(r *http.Request, w http.ResponseWriter) (Note, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Println("I got an error with POST request, reading body")
+		w.WriteHeader(http.StatusBadRequest)
+		return Note{}, err
+	}
+	var bodyRequest Note
+	decodeError := json.Unmarshal(body, &bodyRequest)
+	if decodeError != nil {
+		log.Println("I got an error decoding body")
+		w.WriteHeader(http.StatusBadRequest)
+		return Note{}, decodeError
+	}
+	return bodyRequest, nil
+}
+
+func addNote(note Note, w http.ResponseWriter) {
+	if note.ID == 0 {
+		idCounter++
+		note.ID = idCounter
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "ID not permitted"})
+		return
+	}
+	store[idCounter] = note
+	w.WriteHeader(http.StatusCreated)
+	data, _ := json.Marshal(note)
+	w.Write(data)
+}
+
+func deleteNote(w http.ResponseWriter, r *http.Request) {
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notes"), "/")
+	value, err := strconv.Atoi(id)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid ID"})
+		return
+	}
+	if _, exists := store[value]; !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "not found"})
+		return
+	}
+	delete(store, value)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func getNotes(w http.ResponseWriter) {
 	var data []byte
 	var err error
-
-	if len(id) > 0 {
-		value, err := strconv.Atoi(id)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid ID"})
-			return
-		}
-		fmt.Println("Value: ", value)
-		note := store[value]
-		if note.ID == 0 { //actually checking if not is not zero
-			w.WriteHeader(http.StatusNotFound)
-			data, _ = json.Marshal(ErrorResponse{Error: "not found"})
-		} else {
-			data, err = json.Marshal(store[value])
-		}
-	} else {
-		var notes []Note
-		for _, note := range store {
-			notes = append(notes, note)
-		}
-		data, err = json.Marshal(notes)
+	var notes []Note
+	for _, note := range store {
+		notes = append(notes, note)
 	}
-
+	data, err = json.Marshal(notes)
 	if err != nil {
 		log.Println("I got an error")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	//w.WriteHeader(http.StatusOK) //200 by default
+	w.Write(data)
+}
+
+func getNoteById(id string, w http.ResponseWriter) {
+	var data []byte
+	var err error
+	value, err := strconv.Atoi(id)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid ID"})
+		return
+	}
+	if _, exists := store[value]; !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "not found"})
+		return
+	}
+	data, err = json.Marshal(store[value])
+	w.Write(data)
+}
+
+func updateNote(note Note, w http.ResponseWriter, r *http.Request) {
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notes"), "/")
+	value, err := strconv.Atoi(id)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid ID"})
+		return
+	}
+	if _, exists := store[value]; !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "not found"})
+		return
+	}
+	note.ID = value
+	store[note.ID] = note
+	data, _ := json.Marshal(store[note.ID])
 	w.Write(data)
 }
 
